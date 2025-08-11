@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Azure Speech 발음 평가</title>
+  </head>
+  <body>
+    <h1>발음 평가 테스트</h1>
+
+    <label for="refTextInput">평가 문장 입력:</label>
+    <br />
+    <input
+      type="text"
+      id="refTextInput"
+      size="50"
+      value="Hello, how are you today?"
+    />
+    <button id="setRefBtn">평가 문장 설정</button>
+
+    <p id="reference"></p>
+    <button id="startBtn" disabled>녹음 시작</button>
+    <button id="stopBtn" disabled>녹음 종료</button>
+
+    <div>
+      <p>
+        실시간 인식:
+        <span id="partial"></span>
+      </p>
+      <p>
+        최종 인식:
+        <span id="final"></span>
+      </p>
+      <p>
+        정확도:
+        <span id="accuracy"></span>
+      </p>
+      <p>
+        유창성:
+        <span id="fluency"></span>
+      </p>
+      <p>
+        완성도:
+        <span id="completeness"></span>
+      </p>
+    </div>
+
+    <script>
+      const referenceInput = document.getElementById('refTextInput');
+      const referenceDisplay = document.getElementById('reference');
+      const setRefBtn = document.getElementById('setRefBtn');
+      const startBtn = document.getElementById('startBtn');
+      const stopBtn = document.getElementById('stopBtn');
+
+      let audioContext;
+      let processor;
+      let input;
+      let globalStream;
+      let ws;
+
+      let currentReferenceText = referenceInput.value;
+      referenceDisplay.innerText = `읽으세요: "${currentReferenceText}"`;
+
+      // 페이지 로드 시 한 번만 WS 연결
+      function connectWebSocket() {
+        ws = new WebSocket(`ws://${location.host}`);
+
+        ws.onopen = () => {
+          console.log('WS open');
+          startBtn.disabled = false;
+          // 초기 문장 서버에 전송
+          ws.send(
+            JSON.stringify({ type: 'setReference', text: currentReferenceText })
+          );
+        };
+
+        ws.onmessage = (msg) => {
+          const data = JSON.parse(msg.data);
+          if (data.partial) {
+            document.getElementById('partial').innerText = data.partial;
+          } else if (data.text) {
+            document.getElementById('final').innerText = data.text;
+            document.getElementById('accuracy').innerText = data.accuracy;
+            document.getElementById('fluency').innerText = data.fluency;
+            document.getElementById('completeness').innerText =
+              data.completeness;
+          }
+        };
+
+        ws.onclose = () => {
+          console.log('WS closed');
+          startBtn.disabled = true;
+          stopBtn.disabled = true;
+        };
+
+        ws.onerror = (err) => {
+          console.error('WS error:', err);
+        };
+      }
+
+      setRefBtn.onclick = () => {
+        const newText = referenceInput.value.trim();
+        if (newText && ws && ws.readyState === WebSocket.OPEN) {
+          currentReferenceText = newText;
+          referenceDisplay.innerText = `읽으세요: "${currentReferenceText}"`;
+          ws.send(
+            JSON.stringify({ type: 'setReference', text: currentReferenceText })
+          );
+        }
+      };
+
+      startBtn.onclick = async () => {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: 16000,
+        });
+        globalStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        input = audioContext.createMediaStreamSource(globalStream);
+
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
+        input.connect(processor);
+        processor.connect(audioContext.destination);
+
+        processor.onaudioprocess = (e) => {
+          const inputData = e.inputBuffer.getChannelData(0);
+          const pcm16Buffer = convertFloat32ToInt16(inputData);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(pcm16Buffer);
+          }
+        };
+
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+      };
+
+      stopBtn.onclick = () => {
+        stopAudio();
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      };
+
+      function stopAudio() {
+        if (processor) {
+          processor.disconnect();
+          processor.onaudioprocess = null;
+          processor = null;
+        }
+        if (input) {
+          input.disconnect();
+          input = null;
+        }
+        if (globalStream) {
+          globalStream.getTracks().forEach((track) => track.stop());
+          globalStream = null;
+        }
+        if (audioContext) {
+          audioContext.close();
+          audioContext = null;
+        }
+      }
+
+      function convertFloat32ToInt16(buffer) {
+        let l = buffer.length;
+        const output = new Int16Array(l);
+        while (l--) {
+          let s = Math.max(-1, Math.min(1, buffer[l]));
+          output[l] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        return output.buffer;
+      }
+
+      // 페이지 열리면 WebSocket 연결
+      connectWebSocket();
+    </script>
+  </body>
+</html>
