@@ -7,6 +7,7 @@
   <body>
     <h1>발음 평가 테스트</h1>
 
+    <!-- 사용자 입력 평가 문장 -->
     <label for="refTextInput">평가 문장 입력:</label>
     <br />
     <input
@@ -17,10 +18,14 @@
     />
     <button id="setRefBtn">평가 문장 설정</button>
 
+    <!-- 현재 읽을 문장 표시 -->
     <p id="reference"></p>
+
+    <!-- 녹음 제어 버튼 -->
     <button id="startBtn" disabled>녹음 시작</button>
     <button id="stopBtn" disabled>녹음 종료</button>
 
+    <!-- 실시간 / 최종 인식 및 평가 결과 -->
     <div>
       <p>
         실시간 인식:
@@ -45,39 +50,49 @@
     </div>
 
     <script>
+      // DOM 요소 참조
       const referenceInput = document.getElementById('refTextInput');
       const referenceDisplay = document.getElementById('reference');
       const setRefBtn = document.getElementById('setRefBtn');
       const startBtn = document.getElementById('startBtn');
       const stopBtn = document.getElementById('stopBtn');
 
+      // 오디오 및 WS 관련 변수
       let audioContext;
       let processor;
       let input;
       let globalStream;
       let ws;
 
+      // 현재 참고 문장
       let currentReferenceText = referenceInput.value;
       referenceDisplay.innerText = `읽으세요: "${currentReferenceText}"`;
 
-      // 페이지 로드 시 한 번만 WS 연결
+      /**
+       * WebSocket 서버 연결
+       * 페이지 로드 시 1회 실행
+       */
       function connectWebSocket() {
         ws = new WebSocket(`ws://${location.host}`);
 
+        // 연결 성공 시
         ws.onopen = () => {
           console.log('WS open');
           startBtn.disabled = false;
-          // 초기 문장 서버에 전송
+          // 서버에 초기 참고 문장 전송
           ws.send(
             JSON.stringify({ type: 'setReference', text: currentReferenceText })
           );
         };
 
+        // 서버로부터 메시지 수신
         ws.onmessage = (msg) => {
           const data = JSON.parse(msg.data);
           if (data.partial) {
+            // 실시간 인식 결과
             document.getElementById('partial').innerText = data.partial;
           } else if (data.text) {
+            // 최종 인식 + 평가 결과
             document.getElementById('final').innerText = data.text;
             document.getElementById('accuracy').innerText = data.accuracy;
             document.getElementById('fluency').innerText = data.fluency;
@@ -86,17 +101,22 @@
           }
         };
 
+        // 연결 종료
         ws.onclose = () => {
           console.log('WS closed');
           startBtn.disabled = true;
           stopBtn.disabled = true;
         };
 
+        // 에러 발생
         ws.onerror = (err) => {
           console.error('WS error:', err);
         };
       }
 
+      /**
+       * 참고 문장 변경 버튼 클릭 시
+       */
       setRefBtn.onclick = () => {
         const newText = referenceInput.value.trim();
         if (newText && ws && ws.readyState === WebSocket.OPEN) {
@@ -108,24 +128,31 @@
         }
       };
 
+      /**
+       * 녹음 시작
+       */
       startBtn.onclick = async () => {
+        // 오디오 컨텍스트 생성 (샘플레이트 16kHz)
         audioContext = new (window.AudioContext || window.webkitAudioContext)({
           sampleRate: 16000,
         });
+        // 마이크 접근
         globalStream = await navigator.mediaDevices.getUserMedia({
           audio: true,
         });
         input = audioContext.createMediaStreamSource(globalStream);
 
+        // ScriptProcessorNode 생성 (버퍼 크기 4096, 단일 채널)
         processor = audioContext.createScriptProcessor(4096, 1, 1);
         input.connect(processor);
-        processor.connect(audioContext.destination);
+        processor.connect(audioContext.destination); // Chrome에서 필요
 
+        // 오디오 프레임 단위로 호출
         processor.onaudioprocess = (e) => {
           const inputData = e.inputBuffer.getChannelData(0);
           const pcm16Buffer = convertFloat32ToInt16(inputData);
           if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(pcm16Buffer);
+            ws.send(pcm16Buffer); // PCM16 데이터 서버로 전송
           }
         };
 
@@ -133,12 +160,18 @@
         stopBtn.disabled = false;
       };
 
+      /**
+       * 녹음 종료
+       */
       stopBtn.onclick = () => {
         stopAudio();
         startBtn.disabled = false;
         stopBtn.disabled = true;
       };
 
+      /**
+       * 오디오 리소스 해제
+       */
       function stopAudio() {
         if (processor) {
           processor.disconnect();
@@ -159,6 +192,9 @@
         }
       }
 
+      /**
+       * Float32Array → PCM16 변환
+       */
       function convertFloat32ToInt16(buffer) {
         let l = buffer.length;
         const output = new Int16Array(l);
@@ -169,7 +205,7 @@
         return output.buffer;
       }
 
-      // 페이지 열리면 WebSocket 연결
+      // 페이지 열리면 WS 연결
       connectWebSocket();
     </script>
   </body>
