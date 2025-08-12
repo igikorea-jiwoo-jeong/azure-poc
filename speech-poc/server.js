@@ -1,10 +1,26 @@
+import express from 'express';
+import dotenv from 'dotenv';
+import sdk from 'microsoft-cognitiveservices-speech-sdk';
+import { WebSocketServer } from 'ws';
+import { PassThrough } from 'stream';
+
+dotenv.config();
+
+const app = express();
+app.use(express.static('public'));
+
+const server = app.listen(3000, () => {
+  console.log('Server running on http://localhost:3000');
+});
+
+const wss = new WebSocketServer({ server });
+
 wss.on('connection', (ws) => {
   console.log('Client connected for pronunciation assessment');
 
   let referenceText = 'Hello, how are you today?'; // 기본 문장
   let pronunciationConfig, recognizer, pushStream;
 
-  // 함수로 recognizer 초기화
   function startRecognizer(text) {
     if (recognizer) {
       recognizer.stopContinuousRecognitionAsync(() => {
@@ -54,7 +70,6 @@ wss.on('connection', (ws) => {
   }
 
   ws.on('message', (msg) => {
-    // 클라이언트에서 JSON 메시지인지 오디오 데이터인지 구분
     try {
       const data = JSON.parse(msg);
       if (data.type === 'setReference') {
@@ -63,14 +78,12 @@ wss.on('connection', (ws) => {
         startRecognizer(referenceText);
       }
     } catch {
-      // JSON 파싱 실패하면 오디오 데이터라고 가정
       if (pushStream) {
         pushStream.write(Buffer.from(msg));
       }
     }
   });
 
-  // 기본 recognizer 시작
   startRecognizer(referenceText);
 
   ws.on('close', () => {
